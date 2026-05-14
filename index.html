@@ -163,12 +163,31 @@
 
             try {
                 const arrayBuffer = await file.arrayBuffer();
-                sm.innerText = "正在提取纯文本结构...";
-                const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+                sm.innerText = "正在提取图文结构...";
+                
+                // 【修改点】：改用 convertToHtml 以保留图片
+                const result = await mammoth.convertToHtml({ arrayBuffer: arrayBuffer });
+                this.extractedImages = [];
+                let htmlContent = result.value;
+
+                // 【新增】：提取 img 标签并用占位符替换
+                let textWithPlaceholders = htmlContent.replace(/<img[^>]+>/g, (match) => {
+                    let idx = this.extractedImages.length;
+                    // 增加样式适配屏幕
+                    let styledImg = match.replace('<img ', '<img style="max-width:100%; height:auto; display:block; margin:15px 0; border-radius:5px; box-shadow:0 2px 8px rgba(0,0,0,0.1);" ');
+                    this.extractedImages.push(styledImg);
+                    return `\n___IMG_${idx}___\n`;
+                });
+
+                // 【新增】：将段落转为换行，移除其余 HTML 标签，转为纯文本
+                let plainText = textWithPlaceholders
+                    .replace(/<\/p>/gi, '\n')
+                    .replace(/<br\s*\/?>/gi, '\n')
+                    .replace(/<[^>]+>/g, '');
                 
                 sm.innerText = "提取成功，正在执行解析逻辑...";
                 setTimeout(() => {
-                    this.extract(result.value);
+                    this.extract(plainText); // 传入带占位符的纯文本
                 }, 100);
 
             } catch (err) { alert(`解析失败: ` + err.message); }
@@ -267,13 +286,39 @@
 
                 parsed.push({ rawID, stem, options, answer, explanation: exp });
             });
+// ... 之前的提取题干、选项、答案的代码保持不变 ...
 
+                // 【新增】：定义一个还原图片的辅助函数
+                const formatContent = (str) => {
+                    if (!str) return str;
+                    return str.replace(/___IMG_(\d+)___/g, (match, p1) => {
+                        return this.extractedImages[p1] || '';
+                    });
+                };
+
+                // 【修改点】：在存入数组前，通过 formatContent 还原图片
+                parsed.push({ 
+                    rawID, 
+                    stem: formatContent(stem), 
+                    options: options.map(o => ({ label: o.label, text: formatContent(o.text) })), 
+                    answer, 
+                    explanation: formatContent(exp) 
+                });
+            });
+
+            // 【新增】：为了防止图片过多导致 LocalStorage 超出 5MB 限制，加一个 Try-Catch
             if (parsed.length > 0) {
-                localStorage.setItem(this.KEYS.DATA, JSON.stringify(parsed));
-                localStorage.setItem(this.KEYS.ALL_IDX, 0);
-                localStorage.setItem(this.KEYS.WRONG_IDX, 0);
-                location.reload();
-            } else { alert("未识别到有效题库内容，请检查 Word 文档格式。"); }
+                try {
+                    localStorage.setItem(this.KEYS.DATA, JSON.stringify(parsed));
+                    localStorage.setItem(this.KEYS.ALL_IDX, 0);
+                    localStorage.setItem(this.KEYS.WRONG_IDX, 0);
+                    location.reload();
+                } catch (e) {
+                    alert("文档中的图片体积过大，超出了浏览器的本地缓存限制 (通常为5MB)。\n请尝试压缩 Word 中的图片后再上传。");
+                }
+            } else { 
+                alert("未识别到有效题库内容，请检查 Word 文档格式。"); 
+            }
         }
 
         get index() { return this.mode === 'all' ? this.allIndex : this.wrongIndex; }
@@ -293,10 +338,10 @@
             document.getElementById('res-box').classList.add('hidden');
             
             document.getElementById('jump-idx').value = this.index + 1;
-            document.getElementById('total-display').innerText = `/ ${data.length}`;
-            document.getElementById('meta-seq').innerText = `${this.mode === 'all' ? '顺序题号' : '错题题号'}: ${this.index + 1} / ${data.length}`;
-            document.getElementById('meta-raw').innerText = q.rawID;
-            document.getElementById('q-text').innerText = q.stem;
+            document.getElementById('total-display').innerHTML = `/ ${data.length}`;
+            document.getElementById('meta-seq').innerHTML = `${this.mode === 'all' ? '顺序题号' : '错题题号'}: ${this.index + 1} / ${data.length}`;
+            document.getElementById('meta-raw').innerHTML = q.rawID;
+            document.getElementById('q-text').innerHTML = q.stem;
             
             const ob = document.getElementById('options-box');
             ob.innerHTML = '';

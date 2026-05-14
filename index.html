@@ -122,20 +122,19 @@
     class QuizApp {
         constructor() {
             this.KEYS = { 
-                DATA: 'cda_data_docx_v3', 
-                ALL_IDX: 'cda_all_idx_docx_v3', 
-                WRONG_IDX: 'cda_wrong_idx_docx_v3', 
-                WRONG: 'cda_wb_docx_v3' 
+                DATA: 'cda_data_docx_v4', 
+                ALL_IDX: 'cda_all_idx_docx_v4', 
+                WRONG_IDX: 'cda_wrong_idx_docx_v4', 
+                WRONG: 'cda_wb_docx_v4' 
             };
             this.allQuestions = JSON.parse(localStorage.getItem(this.KEYS.DATA)) || [];
             this.wrongBook = JSON.parse(localStorage.getItem(this.KEYS.WRONG)) || [];
-            
             this.allIndex = parseInt(localStorage.getItem(this.KEYS.ALL_IDX)) || 0;
             this.wrongIndex = parseInt(localStorage.getItem(this.KEYS.WRONG_IDX)) || 0;
-            
             this.mode = 'all';
             this.isSubmitted = false;
             this.selected = new Set();
+            this.extractedImages = []; // 初始化图片存储数组
             this.init();
         }
 
@@ -149,7 +148,6 @@
             }
         }
 
-        // 解析本地上传的 DOCX
         async parse(file) {
             const sm = document.getElementById('status-msg');
             const extension = file.name.split('.').pop().toLowerCase();
@@ -165,21 +163,17 @@
                 const arrayBuffer = await file.arrayBuffer();
                 sm.innerText = "正在提取图文结构...";
                 
-                // 【修改点】：改用 convertToHtml 以保留图片
                 const result = await mammoth.convertToHtml({ arrayBuffer: arrayBuffer });
                 this.extractedImages = [];
                 let htmlContent = result.value;
 
-                // 【新增】：提取 img 标签并用占位符替换
                 let textWithPlaceholders = htmlContent.replace(/<img[^>]+>/g, (match) => {
                     let idx = this.extractedImages.length;
-                    // 增加样式适配屏幕
                     let styledImg = match.replace('<img ', '<img style="max-width:100%; height:auto; display:block; margin:15px 0; border-radius:5px; box-shadow:0 2px 8px rgba(0,0,0,0.1);" ');
                     this.extractedImages.push(styledImg);
                     return `\n___IMG_${idx}___\n`;
                 });
 
-                // 【新增】：将段落转为换行，移除其余 HTML 标签，转为纯文本
                 let plainText = textWithPlaceholders
                     .replace(/<\/p>/gi, '\n')
                     .replace(/<br\s*\/?>/gi, '\n')
@@ -187,32 +181,43 @@
                 
                 sm.innerText = "提取成功，正在执行解析逻辑...";
                 setTimeout(() => {
-                    this.extract(plainText); // 传入带占位符的纯文本
+                    this.extract(plainText);
                 }, 100);
 
             } catch (err) { alert(`解析失败: ` + err.message); }
         }
 
-        // 从 URL 获取并解析 DOCX
         async loadFromUrl(url) {
             const sm = document.getElementById('status-msg');
             sm.innerText = "正在从服务器拉取题库文件，请稍候...";
-            
             const buttons = document.querySelectorAll('#upload-section button');
             buttons.forEach(b => b.disabled = true);
 
             try {
-                // 增加缓存控制以防 GitHub Pages 强缓存问题
                 const response = await fetch(url + '?t=' + new Date().getTime());
                 if (!response.ok) throw new Error(`HTTP ${response.status} - 文件不存在或路径错误。`);
                 const arrayBuffer = await response.arrayBuffer();
                 
-                sm.innerText = "正在提取纯文本结构...";
-                const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+                sm.innerText = "正在提取图文结构...";
+                const result = await mammoth.convertToHtml({ arrayBuffer: arrayBuffer });
+                this.extractedImages = [];
+                let htmlContent = result.value;
+
+                let textWithPlaceholders = htmlContent.replace(/<img[^>]+>/g, (match) => {
+                    let idx = this.extractedImages.length;
+                    let styledImg = match.replace('<img ', '<img style="max-width:100%; height:auto; display:block; margin:15px 0; border-radius:5px; box-shadow:0 2px 8px rgba(0,0,0,0.1);" ');
+                    this.extractedImages.push(styledImg);
+                    return `\n___IMG_${idx}___\n`;
+                });
+
+                let plainText = textWithPlaceholders
+                    .replace(/<\/p>/gi, '\n')
+                    .replace(/<br\s*\/?>/gi, '\n')
+                    .replace(/<[^>]+>/g, '');
                 
                 sm.innerText = "提取成功，正在执行解析逻辑...";
                 setTimeout(() => { 
-                    this.extract(result.value); 
+                    this.extract(plainText); 
                 }, 100);
 
             } catch (err) {
@@ -224,14 +229,12 @@
 
         extract(text) {
             text = text.replace(/店铺：IT认证考试服务|Exam Topic|微信：|www\.examtopic\.com|IT认证考试服务/gi, '');
-            
             const blocks = text.split(/(?=QUESTION\s+\d+|问题\s+\d+)/gi);
             const parsed = [];
 
             blocks.forEach(block => {
                 if (block.length < 50) return;
                 const rawNumMatch = block.match(/(?:QUESTION|问题)\s+(\d+)/i);
-                
                 const rawID = rawNumMatch ? `QUESTION ${rawNumMatch[1]}` : "QUESTION";
 
                 const optRegex = /(?:\s|^)([A-E])[\.．、:]\s/g;
@@ -284,11 +287,6 @@
                     if (afterAns.length > 5) exp = afterAns;
                 }
 
-                parsed.push({ rawID, stem, options, answer, explanation: exp });
-            });
-// ... 之前的提取题干、选项、答案的代码保持不变 ...
-
-                // 【新增】：定义一个还原图片的辅助函数
                 const formatContent = (str) => {
                     if (!str) return str;
                     return str.replace(/___IMG_(\d+)___/g, (match, p1) => {
@@ -296,7 +294,6 @@
                     });
                 };
 
-                // 【修改点】：在存入数组前，通过 formatContent 还原图片
                 parsed.push({ 
                     rawID, 
                     stem: formatContent(stem), 
@@ -306,7 +303,6 @@
                 });
             });
 
-            // 【新增】：为了防止图片过多导致 LocalStorage 超出 5MB 限制，加一个 Try-Catch
             if (parsed.length > 0) {
                 try {
                     localStorage.setItem(this.KEYS.DATA, JSON.stringify(parsed));
@@ -314,11 +310,9 @@
                     localStorage.setItem(this.KEYS.WRONG_IDX, 0);
                     location.reload();
                 } catch (e) {
-                    alert("文档中的图片体积过大，超出了浏览器的本地缓存限制 (通常为5MB)。\n请尝试压缩 Word 中的图片后再上传。");
+                    alert("文档中的图片体积过大，超出了浏览器的本地缓存限制 (通常为5MB)。\n请尝试缩小 Word 中的图片尺寸后再上传。");
                 }
-            } else { 
-                alert("未识别到有效题库内容，请检查 Word 文档格式。"); 
-            }
+            } else { alert("未识别到有效题库内容，请检查 Word 文档格式。"); }
         }
 
         get index() { return this.mode === 'all' ? this.allIndex : this.wrongIndex; }
@@ -341,7 +335,7 @@
             document.getElementById('total-display').innerHTML = `/ ${data.length}`;
             document.getElementById('meta-seq').innerHTML = `${this.mode === 'all' ? '顺序题号' : '错题题号'}: ${this.index + 1} / ${data.length}`;
             document.getElementById('meta-raw').innerHTML = q.rawID;
-            document.getElementById('q-text').innerHTML = q.stem;
+            document.getElementById('q-text').innerHTML = q.stem; // 改为 innerHTML 渲染图片
             
             const ob = document.getElementById('options-box');
             ob.innerHTML = '';
@@ -374,7 +368,7 @@
             this.isSubmitted = true;
             document.getElementById('btn-submit').disabled = true;
             document.getElementById('ans-val').innerText = q.answer;
-            document.getElementById('exp-val').innerText = q.explanation;
+            document.getElementById('exp-val').innerHTML = q.explanation; // 改为 innerHTML 渲染图片
             document.getElementById('res-box').classList.remove('hidden');
 
             if (userAns !== q.answer) {
@@ -429,7 +423,7 @@
         }
     }
 
-    // 【重要修复】：将 app 挂载到 window，确保 HTML 中的 onclick 事件能访问到
+    // 确保绑定到 window
     window.app = new QuizApp();
 
     document.getElementById('upload-section').addEventListener('click', (e) => {

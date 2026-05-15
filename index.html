@@ -148,6 +148,36 @@
             }
         }
 
+        // ================= 新增核心拦截逻辑 =================
+        checkAndClearBeforeLoad() {
+            const existingData = localStorage.getItem(this.KEYS.DATA);
+            if (existingData) {
+                const confirmClear = confirm(
+                    "⚠️ 覆盖提醒\n\n加载新题库将会清空【当前题库】的所有做题进度和【错题本】！\n如果您还需要查看当前错题，请先截图或导出。\n\n是否确认清空并加载新题库？"
+                );
+                
+                if (!confirmClear) {
+                    return false; // 用户点击取消，终止流程
+                }
+                
+                // 用户点击确定，执行彻底清空旧缓存逻辑
+                localStorage.removeItem(this.KEYS.DATA);
+                localStorage.removeItem(this.KEYS.ALL_IDX);
+                localStorage.removeItem(this.KEYS.WRONG_IDX);
+                localStorage.removeItem(this.KEYS.WRONG);
+                
+                // 重置当前实例的数据
+                this.allQuestions = [];
+                this.wrongBook = [];
+                this.allIndex = 0;
+                this.wrongIndex = 0;
+                this.updateWC();
+                console.log("🟢 历史题库缓存已清空，准备加载新题库...");
+            }
+            return true; // 允许加载
+        }
+        // ====================================================
+
         async parse(file) {
             const sm = document.getElementById('status-msg');
             const extension = file.name.split('.').pop().toLowerCase();
@@ -188,6 +218,11 @@
         }
 
         async loadFromUrl(url) {
+            // [新增] 拦截检查：是否有旧题库需要清空
+            if (!this.checkAndClearBeforeLoad()) {
+                return; // 如果用户取消了覆盖，直接退出
+            }
+
             const sm = document.getElementById('status-msg');
             sm.innerText = "正在从服务器拉取题库文件，请稍候...";
             const buttons = document.querySelectorAll('#upload-section button');
@@ -221,7 +256,7 @@
                 }, 100);
 
             } catch (err) {
-                alert(`加载失败！请确保 GitHub 根目录下存在文件：${url}\n错误详情: ` + err.message);
+                alert(`加载失败！请确保文件存在。\n错误详情: ` + err.message);
                 sm.innerText = "加载失败，请检查文件路径或直接本地上传。";
                 buttons.forEach(b => b.disabled = false);
             }
@@ -335,7 +370,7 @@
             document.getElementById('total-display').innerHTML = `/ ${data.length}`;
             document.getElementById('meta-seq').innerHTML = `${this.mode === 'all' ? '顺序题号' : '错题题号'}: ${this.index + 1} / ${data.length}`;
             document.getElementById('meta-raw').innerHTML = q.rawID;
-            document.getElementById('q-text').innerHTML = q.stem; // 改为 innerHTML 渲染图片
+            document.getElementById('q-text').innerHTML = q.stem; 
             
             const ob = document.getElementById('options-box');
             ob.innerHTML = '';
@@ -368,7 +403,7 @@
             this.isSubmitted = true;
             document.getElementById('btn-submit').disabled = true;
             document.getElementById('ans-val').innerText = q.answer;
-            document.getElementById('exp-val').innerHTML = q.explanation; // 改为 innerHTML 渲染图片
+            document.getElementById('exp-val').innerHTML = q.explanation; 
             document.getElementById('res-box').classList.remove('hidden');
 
             if (userAns !== q.answer) {
@@ -431,7 +466,18 @@
             document.getElementById('file-input').click();
         }
     });
-    document.getElementById('file-input').onchange = (e) => { if (e.target.files[0]) window.app.parse(e.target.files[0]); };
+
+    // [新增] 本地上传拦截检查：如果有旧缓存，先提示，如果取消，重置 input 状态以支持重选
+    document.getElementById('file-input').onchange = (e) => { 
+        const file = e.target.files[0];
+        if (file) { 
+            if (!window.app.checkAndClearBeforeLoad()) {
+                e.target.value = ''; // 重置 input，否则下次选相同文件不触发 onchange
+                return;
+            }
+            window.app.parse(file); 
+        } 
+    };
 </script>
 </body>
 </html>
